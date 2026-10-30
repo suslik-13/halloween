@@ -16,7 +16,7 @@ import random
 import sys
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import b3d  # noqa: E402
@@ -87,16 +87,19 @@ def outline(img, color=OUTL):
 
 
 # ---------------------------------------------------------------- cobwebs
-def cobweb(size, cx, cy, radius, spokes, rings, alpha=200, a0=0.0, a1=2 * math.pi):
+def cobweb(size, cx, cy, radius, spokes, rings, alpha=200, a0=0.0, a1=2 * math.pi,
+           color=(235, 235, 240), width=0.55, rng=None, h=None):
     """Draws a cobweb into a transparent RGBA image (anti-aliased by supersampling)."""
+    rng = rng or rnd
     ss = 4
-    S = size * ss
-    acc = np.zeros((S, S), np.float32)
+    W = size * ss
+    H = (h or size) * ss
+    acc = np.zeros((H, W), np.float32)
     cxs, cys, rs = cx * ss, cy * ss, radius * ss
     angs = [a0 + (a1 - a0) * i / (spokes - 1 if a1 - a0 < 2 * math.pi else spokes)
             for i in range(spokes)]
-    angs = [a + rnd.uniform(-0.08, 0.08) for a in angs]
-    width = 0.55 * ss
+    angs = [a + rng.uniform(-0.08, 0.08) for a in angs]
+    width = width * ss
 
     def seg(x0, y0, x1, y1):
         n = int(max(abs(x1 - x0), abs(y1 - y0))) + 1
@@ -108,7 +111,7 @@ def cobweb(size, cx, cy, radius, spokes, rings, alpha=200, a0=0.0, a1=2 * math.p
             r = int(math.ceil(width))
             for yy in range(yi - r, yi + r + 1):
                 for xx in range(xi - r, xi + r + 1):
-                    if 0 <= xx < S and 0 <= yy < S and (xx - x) ** 2 + (yy - y) ** 2 <= width ** 2:
+                    if 0 <= xx < W and 0 <= yy < H and (xx - x) ** 2 + (yy - y) ** 2 <= width ** 2:
                         acc[yy, xx] = 1
 
     for a in angs:
@@ -126,9 +129,9 @@ def cobweb(size, cx, cy, radius, spokes, rings, alpha=200, a0=0.0, a1=2 * math.p
             my += (cys - my) * 0.12
             seg(x0, y0, mx, my)
             seg(mx, my, x1, y1)
-    cov = acc.reshape(size, ss, size, ss).mean(axis=(1, 3))
-    out = np.zeros((size, size, 4), np.uint8)
-    out[:, :, 0:3] = (235, 235, 240)
+    cov = acc.reshape(H // ss, ss, W // ss, ss).mean(axis=(1, 3))
+    out = np.zeros((H // ss, W // ss, 4), np.uint8)
+    out[:, :, 0:3] = color
     out[:, :, 3] = np.clip(cov * 1.8, 0, 1) * alpha
     return Image.fromarray(out)
 
@@ -720,6 +723,239 @@ def paint_sheep(spec, out_name, W, H):
     return m
 
 
+# ---------------------------------------------------------------- unified_inventory decor
+# Own random generator, so the textures above stay the same when this part changes.
+urnd = random.Random(1031 + 31)
+
+WEB_WHITE = (232, 232, 240)
+WEB_BLACK = (6, 4, 8)
+SPIDER_PAL = {"k": (14, 10, 16, 255), "l": (58, 48, 66, 255), "h": (78, 64, 92, 255),
+              "R": (236, 44, 30, 255), "o": GLOW}
+SPIDER = [
+    "..l.........l..",
+    "...l.......l...",
+    "l...l.kkk.l...l",
+    ".l...kRkRk...l.",
+    "..lllkkkkklll..",
+    "l...lkkkkkl...l",
+    ".lll.kkhkk.lll.",
+    "l...kkhkokk...l",
+    ".l..kkoookk..l.",
+    "..l.kkkokkk.l..",
+    "...l.kkkkk.l...",
+    "......kkk......",
+]
+THREAD = (225, 225, 235, 190)
+
+PUMPKIN_PAL = {"d": P_DARK, "m": P_MID, "l": P_LIGHT, "g": STEM, "G": STEM_D,
+               "Y": GLOW_Y}
+PUMPKIN = [
+    ".......Gg.......",
+    "......Gg........",
+    "...dmmlGmlmmd...",
+    "..dmmlmmdmmlmmd.",
+    ".dmmlmmdmmlmmdmd",
+    ".dmYmlmdmmlmYmd.",
+    "dmYYYlmdmmlYYYdm",
+    "dlYYYYmdmmYYYYld",
+    "dmlmmlmYYmlmmldm",
+    "dmYmmlmdmmlmmYdm",
+    ".dmYYmYYYYmYYmd.",
+    ".dmlYYYmmYYYlmd.",
+    "..dmmlmmdmmlmd..",
+    "....dddddddd....",
+]
+UI_SKULL = [
+    "...bbbbbb...",
+    "..bbbbbbbb..",
+    ".bbbbbbbbbb.",
+    ".bbbbbbbbbs.",
+    "bkkkbbbkkkbs",
+    "bkkbbbbbkkbs",
+    ".bbbbkbbbbs.",
+    ".sbbkkkbbss.",
+    "..sbbbbbbs..",
+    "..bkbkbkbk..",
+    "...ssssss...",
+]
+UI_BONE = [
+    "bb..........bb",
+    "bbbbbbbbbbbbbb",
+    "ssbbbbbbbbbbss",
+    "ss..........ss",
+]
+
+
+def pad(img, n=1):
+    out = Image.new("RGBA", (img.size[0] + 2 * n, img.size[1] + 2 * n), T)
+    out.alpha_composite(img, (n, n))
+    return out
+
+
+def spider_sprite():
+    return pad(from_rows(SPIDER, SPIDER_PAL))
+
+
+def corner_web(size, color, alpha):
+    return cobweb(size, 0, 0, size * 0.98, 7, 6, alpha=alpha, a0=0.06, a1=math.pi / 2 - 0.06,
+                  color=color, width=0.9, rng=urnd)
+
+
+def crack(w, h, start, angle, length, branches):
+    """A dark crack with a thin light edge, drawn as a jittered polyline with side branches."""
+    img = Image.new("RGBA", (w, h), T)
+    d = ImageDraw.Draw(img)
+
+    def walk(x, y, a, n):
+        pts = [(x, y)]
+        for _ in range(n):
+            a += urnd.uniform(-0.55, 0.55)
+            step = urnd.uniform(4, 8)
+            x += math.cos(a) * step
+            y += math.sin(a) * step
+            pts.append((x, y))
+        return pts
+
+    lines = []
+    main = walk(start[0], start[1], angle, length)
+    lines.append((main, 3))
+    for _ in range(branches):
+        i = urnd.randrange(2, len(main) - 1)
+        side = urnd.choice((-1, 1))
+        bx, by = main[i]
+        lines.append((walk(bx, by, angle + side * urnd.uniform(0.6, 1.1),
+                           urnd.randint(2, max(3, length // 2))), 2))
+    for pts, wd in lines:
+        d.line([(x + 1, y + 1) for x, y in pts], fill=(120, 110, 128, 110), width=wd)
+    for pts, wd in lines:
+        d.line(pts, fill=(10, 8, 12, 235), width=wd)
+    return img
+
+
+def spider_drop(frame_w=18, frame_h=160):
+    """Vertical frame strip: the spider slides down its thread, dangles, climbs back."""
+    sp = spider_sprite().transpose(Image.ROTATE_180)  # head down
+    sw, sh = sp.size
+    top, bottom = -sh + 4, frame_h - sh - 2
+    ease = lambda t: t * t * (3 - 2 * t)  # noqa: E731
+    ys = []
+    ys += [top] * 3                                                 # hidden in the web
+    ys += [top + (bottom - top) * ease(i / 9) for i in range(1, 10)]  # drop
+    ys += [bottom, bottom - 2, bottom - 3, bottom - 2, bottom, bottom + 1]  # dangle
+    ys += [bottom - (bottom - top) * (i / 7) for i in range(1, 8)]    # climb back
+    frames = Image.new("RGBA", (frame_w, frame_h * len(ys)), T)
+    for f, y in enumerate(ys):
+        y = int(round(y))
+        fr = Image.new("RGBA", (frame_w, frame_h), T)
+        tx = frame_w // 2
+        for ty in range(0, max(0, y + 2)):
+            fr.putpixel((tx, ty), THREAD)
+        sx = (frame_w - sw) // 2
+        if y < 0:
+            fr.alpha_composite(sp, (sx, 0), (0, -y))
+        else:
+            fr.alpha_composite(sp, (sx, y))
+        frames.paste(fr, (0, f * frame_h))
+    return frames, len(ys)
+
+
+def ui_coffin():
+    w, h = 26, 11
+    img = Image.new("RGBA", (w, h), T)
+    px = img.load()
+    cy = (h - 1) / 2
+
+    def half(x):  # half height of the lid seen from above: head, shoulders, feet
+        if x < 7:
+            return 2.6 + (5.0 - 2.6) * x / 7
+        return 5.0 - (5.0 - 3.0) * (x - 7) / (w - 8)
+    for x in range(w):
+        for y in range(h):
+            if abs(y - cy) <= half(x):
+                c = WOOD
+                if y % 3 == 0:
+                    c = WOOD_D
+                elif urnd.random() < 0.15:
+                    c = WOOD_L
+                px[x, y] = jitter(c, 5)
+    for y in range(2, 9):  # cross on the lid
+        px[8, y] = BONE
+    for x in range(5, 12):
+        px[x, 4] = BONE
+    return outline(pad(img))
+
+
+def ui_bones():
+    bone = from_rows(UI_BONE, BP)
+    img = Image.new("RGBA", (20, 14), T)
+    for ang in (28, -28):
+        r = bone.rotate(ang, resample=Image.NEAREST, expand=True)
+        img.alpha_composite(r, ((20 - r.size[0]) // 2, (14 - r.size[1]) // 2))
+    return outline(img)
+
+
+def ui_ground(w=1024, h=48):
+    """Dark graveyard soil with dry grass along the top and rounded bottom corners."""
+    img = Image.new("RGBA", (w, h), T)
+    px = img.load()
+    surf = [10 + int(2 * math.sin(x / 23.0) + 1.5 * math.sin(x / 7.3 + 1)) for x in range(w)]
+    for x in range(w):
+        for y in range(surf[x], h):
+            t = (y - surf[x]) / (h - surf[x])
+            c = (int(58 - 30 * t), int(42 - 22 * t), int(40 - 18 * t), 255)
+            if urnd.random() < 0.06:
+                c = (78, 66, 60, 255) if urnd.random() < 0.5 else (24, 16, 18, 255)
+            px[x, y] = jitter(c, 4)
+    x = 0
+    while x < w:  # dry grass tufts
+        for k in range(urnd.randint(1, 4)):
+            gx = x + k * 2
+            if gx >= w:
+                break
+            gh = urnd.randint(3, 9)
+            gc = urnd.choice([(74, 70, 36, 255), (58, 62, 30, 255), (92, 78, 44, 255)])
+            for j in range(gh):
+                yy = surf[gx] - j
+                xx = gx + (j // 4) * urnd.choice((0, 0, 1))
+                if 0 <= yy < h and xx < w:
+                    px[xx, yy] = gc
+        x += urnd.randint(5, 16)
+    r = 6  # rounded bottom corners like the unified_inventory background
+    for y in range(h - r, h):
+        for x in range(r):
+            if math.hypot(r - x - 0.5, y - (h - r) + 0.5) > r:
+                px[x, y] = T
+                px[w - 1 - x, y] = T
+    return img
+
+
+def gen_ui():
+    save(corner_web(192, WEB_WHITE, 190), "halloween_ui_web_white.png")
+    save(corner_web(192, WEB_BLACK, 235), "halloween_ui_web_black.png")
+    save(cobweb(128, 64, 0, 66, 7, 4, alpha=190, a0=0.0, a1=math.pi, color=WEB_WHITE,
+                width=0.9, rng=urnd, h=64), "halloween_ui_web_top.png")
+    save(cobweb(96, 48, 48, 46, 9, 4, alpha=190, color=WEB_WHITE, width=0.9, rng=urnd),
+         "halloween_ui_web_round.png")
+
+    save(crack(96, 160, (0, 30), 0.35, 22, 4), "halloween_ui_crack1.png")
+    save(crack(96, 80, (30, 0), 1.35, 12, 3), "halloween_ui_crack2.png")
+    save(crack(96, 128, (48, 0), 1.6, 18, 4), "halloween_ui_crack3.png")
+    save(crack(64, 96, (63, 70), math.pi + 0.5, 12, 3), "halloween_ui_crack4.png")
+
+    save(spider_sprite(), "halloween_ui_spider.png")
+    frames, n = spider_drop()
+    assert n == 25, n
+    save(frames, "halloween_ui_spider_drop.png")
+    frames, n = spider_drop(frame_h=100)
+    save(frames, "halloween_ui_spider_drop_short.png")
+
+    save(outline(pad(from_rows(PUMPKIN, PUMPKIN_PAL))), "halloween_ui_pumpkin.png")
+    save(outline(pad(from_rows(UI_SKULL, BP))), "halloween_ui_skull.png")
+    save(ui_bones(), "halloween_ui_bones.png")
+    save(ui_coffin(), "halloween_ui_coffin.png")
+    save(ui_ground(), "halloween_ui_ground.png")
+
+
 def main():
     os.makedirs(TEX, exist_ok=True)
     os.makedirs(MOD_MODELS, exist_ok=True)
@@ -729,6 +965,7 @@ def main():
     gen_pumpkin()
     gen_coffin()
     gen_armor()
+    gen_ui()
     if len(sys.argv) >= 4:
         paint_sheep(sys.argv[1], "halloween_sheep.png", 128, 128)
         paint_sheep(sys.argv[2], "halloween_sheep_old.png", 160, 144)

@@ -11,6 +11,8 @@
 --   chests           -> jack-o'-lanterns
 --   all armor        -> bones painted on top
 --   sheep            -> skeletons with a pumpkin head
+--   unified_inventory -> cobwebs, cracks and spiders on the background,
+--                        pumpkins, skulls, bones and coffins along the bottom
 
 local function override(name, def)
 	if minetest.registered_items[name] then
@@ -298,6 +300,137 @@ local function sheep()
 	end
 end
 
+---------------------------------------------------------------- unified_inventory
+
+local F = minetest.formspec_escape
+
+-- Builds the decoration for one unified_inventory layout (full or lite).
+-- Everything except the two dropping spiders is a background[] element, so it
+-- is drawn under the slots, buttons and text of the inventory. The form gets
+-- a strip of graveyard ground at the bottom (ground_h high).
+local ground_h = 0.75
+
+local ground_items = {
+	{"halloween_ui_pumpkin.png", 18, 16},
+	{"halloween_ui_bones.png", 22, 16},
+	{"halloween_ui_skull.png", 14, 13},
+	{"halloween_ui_coffin.png", 28, 13},
+	{"halloween_ui_skull.png", 14, 13},
+	{"halloween_ui_pumpkin.png", 18, 16},
+	{"halloween_ui_bones.png", 22, 16},
+	{"halloween_ui_coffin.png", 28, 13},
+	{"halloween_ui_pumpkin.png", 18, 16},
+	{"halloween_ui_skull.png", 14, 13},
+}
+local ground_gaps = {0.35, 0.9, 0.2, 0.6, 1.1, 0.4, 0.15, 0.8, 0.5}
+
+local function ui_decor(ui, style)
+	local W, H = style.formw, style.formh
+	local s = style.is_lite_mode and 0.8 or 1
+	local img = ui.imgscale or 1.25
+	local out = {}
+
+	local function bg(x, y, w, h, tex)
+		out[#out + 1] = ("background[%.3f,%.3f;%.3f,%.3f;%s;false]"):format(x, y, w, h, F(tex))
+	end
+
+	-- free areas of the main page: left of the craft grid and between the
+	-- craft result slot and the item browser
+	local bottom = style.std_inv_y - 0.15
+	local left_w = style.craft_x - 0.1
+	local gap_x = style.craft_x + img * 5 + 0.05
+	local gap_w = math.max(0.6, style.page_x - 0.2 - gap_x)
+
+	-- cracks
+	bg(0.05, bottom * 0.3, 1.4 * s, 2.3 * s, "halloween_ui_crack1.png")
+	bg(style.craft_x + 0.6, 0.03, 1.3 * s, 1.1 * s, "halloween_ui_crack2.png")
+	bg(gap_x, bottom * 0.5, gap_w, 1.9 * s, "halloween_ui_crack3.png")
+	bg(W - 1.05 * s, H - 1.6 * s, 1.0 * s, 1.5 * s, "halloween_ui_crack4.png")
+
+	-- graveyard ground with pumpkins, skulls, bones and coffins
+	bg(0, H - 0.1, W, ground_h + 0.1, "halloween_ui_ground.png")
+	local px = 0.045 * s -- one sprite pixel
+	local x, i = 0.3, 1
+	while true do
+		local it = ground_items[(i - 1) % #ground_items + 1]
+		local w, h = it[2] * px, it[3] * px
+		if x + w > W - 0.3 then
+			break
+		end
+		bg(x, H + ground_h - 0.08 - h, w, h, it[1])
+		x = x + w + ground_gaps[(i - 1) % #ground_gaps + 1] * s
+		i = i + 1
+	end
+
+	-- cobwebs: big ones in the corners, smaller ones in the free areas
+	local cw = 2.4 * s
+	local fh = H + ground_h
+	bg(0, 0, cw, cw, "halloween_ui_web_black.png")
+	bg(W - cw, 0, cw, cw, "halloween_ui_web_white.png^[transformFX")
+	bg(0, fh - cw, cw, cw, "halloween_ui_web_white.png^[transformFY")
+	bg(W - cw, fh - cw, cw, cw, "halloween_ui_web_black.png^[transformR180")
+	local top_x = style.craft_x + 3.4 * s
+	bg(top_x, 0, 1.6 * s, 0.8 * s, "halloween_ui_web_top.png")
+	local round = math.min(1.2 * s, left_w * 0.5)
+	bg(0.1, bottom - round - 0.1, round, round, "halloween_ui_web_round.png")
+
+	-- spiders sitting on the webs (sprite is 17x14 px)
+	local sw, sh = 17 * px * 1.3, 14 * px * 1.3
+	bg(0.55 * s, fh - 1.3 * s, sw, sh, "halloween_ui_spider.png^[transformR180")
+	bg(W - 1.2 * s, fh - 1.6 * s, sw, sh, "halloween_ui_spider.png^[transformFX")
+	bg(top_x + 0.8 * s - sw / 2, 0.18 * s, sw, sh, "halloween_ui_spider.png")
+	bg(0.1 + round / 2 - sw / 2, bottom - round / 2 - 0.1 - sh / 2, sw, sh,
+		"halloween_ui_spider.png")
+
+	-- spiders going down and up on their threads (25 frames of 18x160 px, the
+	-- short one 18x100 px: it stops above the trash slot)
+	local drop_h = bottom - 0.15
+	local drop_w = drop_h * 18 / 160
+	out[#out + 1] = ("animated_image[%.3f,%.3f;%.3f,%.3f;halloween_spider_1;%s;25;140;1]"):format(
+		left_w * 0.62 - drop_w / 2, 0.15, drop_w, drop_h, "halloween_ui_spider_drop.png")
+	out[#out + 1] = ("animated_image[%.3f,%.3f;%.3f,%.3f;halloween_spider_2;%s;25;170;13]"):format(
+		gap_x + gap_w / 2 - drop_w / 2, 0.05, drop_w, drop_w * 100 / 18,
+		"halloween_ui_spider_drop_short.png")
+
+	return table.concat(out)
+end
+
+-- Wraps unified_inventory.get_formspec: the decoration is inserted right
+-- after the standard background and the form is made ground_h taller.
+-- Only the formspec string sent to the client changes.
+local function unified_inventory_decor()
+	local ui = rawget(_G, "unified_inventory")
+	if type(ui) ~= "table" or type(ui.get_formspec) ~= "function"
+			or type(ui.get_per_player_formspec) ~= "function"
+			or type(ui.standard_background) ~= "string" then
+		return
+	end
+	local get_formspec = ui.get_formspec
+	local cache = {}
+
+	ui.get_formspec = function(player, page, ...)
+		local fs = get_formspec(player, page, ...)
+		if type(fs) ~= "string" or fs == "" or not player then
+			return fs
+		end
+		local style = ui.get_per_player_formspec(player:get_player_name())
+		if not style or not style.formw or not style.formh then
+			return fs
+		end
+		local size = "size[" .. style.formw .. "," .. style.formh .. "]"
+		local s1, e1 = fs:find(size, 1, true)
+		local s2, e2 = fs:find(ui.standard_background, 1, true)
+		if not s1 or not s2 or s2 < e1 then
+			return fs
+		end
+		local key = style.is_lite_mode and "lite" or "full"
+		cache[key] = cache[key] or ui_decor(ui, style)
+		return fs:sub(1, s1 - 1)
+			.. "size[" .. style.formw .. "," .. (style.formh + ground_h) .. "]"
+			.. fs:sub(e1 + 1, e2) .. cache[key] .. fs:sub(e2 + 1)
+	end
+end
+
 ----------------------------------------------------------------
 
 minetest.register_on_mods_loaded(function()
@@ -306,4 +439,5 @@ minetest.register_on_mods_loaded(function()
 	if has_items("default:chest") then chests() end
 	armor()
 	sheep()
+	unified_inventory_decor()
 end)
